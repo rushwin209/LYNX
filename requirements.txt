@@ -1,0 +1,5 @@
+flask
+flask-cors
+paho-mqtt
+google-genai
+pandas
