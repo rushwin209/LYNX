@@ -53,4 +53,4 @@ while True:
     client.publish("luxg", random.randint(1500, 40000) if state["lights"] else 1200)
 
     print(f"Cycle Sync: T:{state['temp']} H:{state['hum']} S:{state['shum']}")
-    time.sleep(120) # 2 Minute Interval
+    time.sleep(60)

@@ -1,0 +1,302 @@
+import React, { useEffect, useState } from "react";
+import {
+  Terminal,
+  Droplets,
+  Sun,
+  Activity,
+  Wind,
+  CloudRain,
+  Camera,
+  MessageSquare,
+} from "lucide-react";
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  Legend,
+} from "recharts";
+import axios from "axios";
+
+const API = "http://127.0.0.1:5000/api";
+
+export default function App() {
+  const [data, setData] = useState<any>({
+    sensors: { temp: 0, hum: 0, shum: 0, lux: 0 },
+    actuators: { PUMP: false, LIGHT: false, VENT: false, MIST: false },
+    logs: [],
+    chartData: [],
+  });
+
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        const res = await axios.get(`${API}/status`);
+        if (res.data) {
+          setData({
+            sensors: res.data.sensors || { temp: 0, hum: 0, shum: 0, lux: 0 },
+            actuators: res.data.actuators || {
+              PUMP: false,
+              LIGHT: false,
+              VENT: false,
+              MIST: false,
+            },
+            logs: res.data.logs || [],
+            chartData: res.data.chartData || [],
+          });
+        }
+      } catch (err) {
+        console.error("Telemetry Link Failure");
+      }
+    };
+    const interval = setInterval(fetchData, 2000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const logs = data.logs || [];
+  const chartData = data.chartData || [];
+
+  return (
+    // min-h-screen allows the page to grow naturally. overflow-x-hidden prevents sideways page shaking.
+    <div className="min-h-screen w-full bg-[#020204] text-slate-300 font-mono p-4 lg:p-8 flex flex-col overflow-x-hidden">
+      {/* 1. MISSION HEADER */}
+      <header className="flex justify-between items-center border-b border-blue-900/30 pb-4 mb-8 shrink-0">
+        <div>
+          <h1 className="text-2xl font-black text-white tracking-tighter italic uppercase">
+            SOL LYNX{" "}
+            <span className="text-blue-600 font-normal">// STATION_01</span>
+          </h1>
+          <p className="text-[10px] text-blue-900 font-bold tracking-[0.4em] uppercase">
+            Autonomous Life Support Monitor
+          </p>
+        </div>
+        <div className="flex items-center gap-6">
+          <div className="text-green-500 text-[10px] font-bold flex items-center gap-2">
+            <Activity size={14} className="animate-pulse" /> CORE_UPLINK: ACTIVE
+          </div>
+        </div>
+      </header>
+
+      {/* 2. MAIN HUB LAYOUT (2-4-6 Split) */}
+      <div className="grid grid-cols-12 gap-8 mb-12">
+        {/* SENSOR DATA (Left Sidebar - Smallest) */}
+        <div className="col-span-12 lg:col-span-2 flex flex-col gap-4">
+          <StatBox
+            label="TEMP"
+            value={`${data.sensors.temp}°C`}
+            color="text-orange-500"
+          />
+          <StatBox
+            label="HUMIDITY"
+            value={`${data.sensors.hum}%`}
+            color="text-cyan-400"
+          />
+          <StatBox
+            label="SOIL"
+            value={`${data.sensors.shum}%`}
+            color="text-blue-500"
+          />
+          <StatBox
+            label="LUX"
+            value={`${data.sensors.lux}`}
+            color="text-yellow-500"
+          />
+        </div>
+
+        {/* CENTER VISUALS (Expanded Camera Feed) */}
+        <div className="col-span-12 lg:col-span-4 space-y-6">
+          {/* Height increased to 350px for a much larger window */}
+          <div className="relative bg-black rounded border border-slate-900 h-[350px] overflow-hidden shadow-[0_0_50px_rgba(0,0,0,0.5)]">
+            <div className="absolute top-4 left-4 z-10 flex items-center gap-2 bg-black/80 px-3 py-1 rounded-full border border-white/5">
+              <Camera size={12} className="text-red-600 animate-pulse" />
+              <span className="text-[9px] font-bold text-white tracking-widest uppercase italic">
+                Cam_Alpha // Live_Feed
+              </span>
+            </div>
+            <div className="w-full h-full bg-[url('https://images.unsplash.com/photo-1585320806297-9794b3e4eeae?auto=format&fit=crop&q=80&w=1200')] bg-cover opacity-30 grayscale" />
+          </div>
+
+          {/* Status Indicator Plates */}
+          <div className="grid grid-cols-2 gap-4">
+            <StatusPlate
+              label="PUMP"
+              active={data.actuators.PUMP}
+              icon={Droplets}
+              activeColor="text-blue-400"
+            />
+            <StatusPlate
+              label="LIGHT"
+              active={data.actuators.LIGHT}
+              icon={Sun}
+              activeColor="text-yellow-400"
+            />
+            <StatusPlate
+              label="VENT"
+              active={data.actuators.VENT}
+              icon={Wind}
+              activeColor="text-green-400"
+            />
+            <StatusPlate
+              label="MIST"
+              active={data.actuators.MIST}
+              icon={CloudRain}
+              activeColor="text-sky-400"
+            />
+          </div>
+        </div>
+
+        {/* LOGS & AI REASONING (Largest Area - Right Sidebar) */}
+        <div className="col-span-12 lg:col-span-6 flex flex-col gap-6">
+          {/* AI INTEL BOX (Fixed Height + Vertical Scroll) */}
+          <div className="bg-[#08080a] border border-blue-900/20 p-6 rounded flex flex-col h-[400px] shadow-inner overflow-hidden">
+            <h4 className="text-[10px] font-bold text-blue-800 uppercase mb-4 flex gap-2">
+              <MessageSquare size={16} /> AI REASONING LOOP
+            </h4>
+            <div className="flex-1 overflow-y-auto pr-3 custom-scrollbar text-[13px] italic text-slate-300 leading-relaxed">
+              {logs.length > 0
+                ? logs[logs.length - 1].text
+                : "Awaiting sensor baseline for mission diagnostic..."}
+            </div>
+          </div>
+
+          {/* MISSION LOG (Vertical + Sideways Scroll for Full Sentences) */}
+          <div className="bg-[#08080a] border border-slate-900 p-6 rounded h-[220px] flex flex-col overflow-hidden">
+            <h4 className="text-[10px] font-bold text-slate-700 uppercase mb-4 flex gap-2">
+              <Terminal size={16} /> MISSION_HISTORY
+            </h4>
+            <div className="flex-1 overflow-auto pr-3 custom-scrollbar space-y-3 text-[11px]">
+              {logs
+                .slice()
+                .reverse()
+                .map((l: any, i: number) => (
+                  <div
+                    key={i}
+                    className="flex gap-4 border-l border-slate-900 pl-4 py-1 opacity-40 hover:opacity-100 transition-opacity whitespace-nowrap"
+                  >
+                    <span className="text-blue-900 font-bold shrink-0">
+                      [{l.time}]
+                    </span>
+                    <span className="inline-block">{l.text}</span>
+                  </div>
+                ))}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* 3. TREND ANALYTICS (Bottom - Guaranteed Visibility) */}
+      <div className="mt-12 border-t border-blue-900/10 pt-10 pb-20">
+        <h3 className="text-blue-900 text-[11px] font-bold uppercase mb-8 tracking-[0.5em] flex items-center gap-3">
+          <Activity size={18} /> MULTI-CHANNEL TELEMETRY TRENDS
+        </h3>
+
+        {/* Fixed height (450px) ensures the graph renders even if the logs above are massive */}
+        <div
+          className="bg-[#08080a]/50 border border-slate-900 p-6 rounded shadow-2xl"
+          style={{ width: "100%", height: 450 }}
+        >
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart
+              data={chartData}
+              margin={{ top: 10, right: 30, left: 10, bottom: 10 }}
+            >
+              <CartesianGrid
+                strokeDasharray="3 3"
+                stroke="#111"
+                vertical={false}
+              />
+              <XAxis
+                dataKey="time"
+                stroke="#334"
+                fontSize={11}
+                tickLine={false}
+                axisLine={false}
+                dy={10}
+              />
+              <YAxis
+                stroke="#334"
+                fontSize={11}
+                tickLine={false}
+                axisLine={false}
+              />
+              <Tooltip
+                contentStyle={{
+                  backgroundColor: "#000",
+                  border: "1px solid #1e3a8a",
+                  fontSize: "11px",
+                }}
+                itemStyle={{ fontSize: "11px" }}
+              />
+              <Legend wrapperStyle={{ fontSize: "11px", paddingTop: "30px" }} />
+              <Line
+                type="monotone"
+                dataKey="temp"
+                stroke="#f97316"
+                strokeWidth={3}
+                dot={false}
+                name="Temperature (°C)"
+                isAnimationActive={false}
+              />
+              <Line
+                type="monotone"
+                dataKey="shum"
+                stroke="#3b82f6"
+                strokeWidth={3}
+                dot={false}
+                name="Soil Moisture (%)"
+                isAnimationActive={false}
+              />
+              <Line
+                type="monotone"
+                dataKey="hum"
+                stroke="#22d3ee"
+                strokeWidth={3}
+                dot={false}
+                name="Air Humidity (%)"
+                isAnimationActive={false}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// --- SUB-COMPONENTS ---
+
+function StatBox({ label, value, color }: any) {
+  return (
+    <div className="bg-[#08080a] border border-slate-900 p-4 rounded hover:border-blue-900/30 transition-all flex flex-col items-center justify-center text-center">
+      <p className="text-[8px] font-bold text-slate-700 uppercase tracking-widest mb-1">
+        {label}
+      </p>
+      <div className={`text-xl font-black ${color} tracking-tighter`}>
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function StatusPlate({ label, active, icon: Icon, activeColor }: any) {
+  return (
+    <div
+      className={`p-4 rounded border flex flex-col items-center justify-center gap-3 transition-all duration-500 ${
+        active
+          ? `bg-blue-600/10 border-blue-600 ${activeColor} shadow-[0_0_20px_rgba(37,99,235,0.1)]`
+          : "bg-transparent border-slate-900 text-slate-800"
+      }`}
+    >
+      <Icon size={18} className={active ? "animate-pulse" : "opacity-20"} />
+      <span className="text-[9px] font-black tracking-widest uppercase">
+        {label}
+      </span>
+      <div
+        className={`h-[2px] w-full rounded-full ${active ? "bg-current animate-pulse" : "bg-slate-900"}`}
+      />
+    </div>
+  );
+}

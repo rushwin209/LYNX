@@ -1,5 +1,14 @@
 import React, { useEffect, useState } from "react";
-import { motion } from "framer-motion";
+import {
+  Terminal,
+  Droplets,
+  Sun,
+  Activity,
+  Wind,
+  CloudRain,
+  Camera,
+  MessageSquare,
+} from "lucide-react";
 import {
   LineChart,
   Line,
@@ -10,179 +19,255 @@ import {
   ResponsiveContainer,
   Legend,
 } from "recharts";
-import {
-  Terminal,
-  Zap,
-  Droplets,
-  Sun,
-  Activity,
-  Wind,
-  CloudRain,
-  Camera,
-  Scan,
-  MessageSquare,
-} from "lucide-react";
 import axios from "axios";
 
 const API = "http://127.0.0.1:5000/api";
 
 export default function App() {
-  const [data, setData] = useState<any>(null);
+  const [data, setData] = useState<any>({
+    sensors: { temp: 0, hum: 0, shum: 0, lux: 0 },
+    actuators: { PUMP: false, LIGHT: false, VENT: false, MIST: false },
+    logs: [],
+    chartData: [],
+  });
 
   useEffect(() => {
-    const interval = setInterval(() => {
-      axios
-        .get(`${API}/status`)
-        .then((res) => setData(res.data))
-        .catch(() => {});
-    }, 2000);
+    const fetchData = async () => {
+      try {
+        const res = await axios.get(`${API}/status`);
+        if (res.data) {
+          setData({
+            sensors: res.data.sensors || { temp: 0, hum: 0, shum: 0, lux: 0 },
+            actuators: res.data.actuators || {
+              PUMP: false,
+              LIGHT: false,
+              VENT: false,
+              MIST: false,
+            },
+            logs: res.data.logs || [],
+            chartData: res.data.chartData || [],
+          });
+        }
+      } catch (err) {
+        console.error("Link Failure");
+      }
+    };
+    const interval = setInterval(fetchData, 2000);
     return () => clearInterval(interval);
   }, []);
 
-  const sendCmd = (code: string) => axios.post(`${API}/cmd`, { code });
-
-  if (!data)
-    return (
-      <div className="h-screen bg-black flex items-center justify-center text-blue-500 font-mono animate-pulse">
-        SYNCING WITH LYNX VISUAL RECON...
-      </div>
-    );
+  const logs = data.logs || [];
+  const chartData = data.chartData || [];
 
   return (
-    <div className="min-h-screen bg-[#020203] text-slate-400 font-mono p-6">
-      {/* HEADER */}
-      <header className="flex justify-between items-center border-b border-blue-900/20 pb-4 mb-8">
-        <div>
-          <h1 className="text-2xl font-black text-white tracking-tighter">
-            SOL LYNX{" "}
-            <span className="text-blue-600 font-light">// MISSION CONTROL</span>
-          </h1>
-          <p className="text-[9px] text-blue-900 font-bold tracking-[0.3em] uppercase">
-            Sector: 7G // Greenhouse Alpha
-          </p>
+    // Removing max-width constraints and using w-full everywhere
+    <div className="min-h-screen w-full bg-[#020204] text-slate-300 font-mono p-4 lg:p-10 flex flex-col items-center">
+      <div className="w-full flex flex-col gap-10">
+        {/* HEADER SECTION - Full Width */}
+        <header className="flex justify-between items-end border-b border-blue-900/40 pb-6">
+          <div>
+            <h1 className="text-4xl font-black text-white italic uppercase tracking-tighter">
+              SOL LYNX{" "}
+              <span className="text-blue-600 font-normal">// STATION_01</span>
+            </h1>
+            <p className="text-[12px] text-blue-900 font-bold tracking-[0.6em] uppercase mt-2">
+              Autonomous Life Support // Neural Interface Active
+            </p>
+          </div>
+          <div className="flex flex-col items-end gap-2">
+            <div className="text-green-500 text-[12px] font-bold flex items-center gap-3">
+              <Activity size={16} className="animate-pulse" /> UPLINK_STABLE:
+              100%
+            </div>
+            <p className="text-[10px] text-slate-700 uppercase tracking-widest">
+              Diagnostic_Buffer: {logs.length} Cycles
+            </p>
+          </div>
+        </header>
+
+        {/* MAIN CONSOLE GRID - 2-4-6 Split, Fully Expansive */}
+        <div className="grid grid-cols-12 gap-10 w-full">
+          {/* LEFT: SENSORS (Compressed vertical list) */}
+          <div className="col-span-12 lg:col-span-2 flex flex-col gap-5">
+            <StatBox
+              label="TEMP"
+              value={`${data.sensors.temp}°C`}
+              color="text-orange-500"
+            />
+            <StatBox
+              label="HUMIDITY"
+              value={`${data.sensors.hum}%`}
+              color="text-cyan-400"
+            />
+            <StatBox
+              label="SOIL"
+              value={`${data.sensors.shum}%`}
+              color="text-blue-500"
+            />
+            <StatBox
+              label="LUX"
+              value={`${data.sensors.lux}`}
+              color="text-yellow-500"
+            />
+          </div>
+
+          {/* CENTER: PRIMARY VISUALS (Large Camera Feed) */}
+          <div className="col-span-12 lg:col-span-4 space-y-10">
+            <div className="relative bg-black rounded-lg border-2 border-slate-900 h-[480px] overflow-hidden shadow-2xl">
+              <div className="absolute top-6 left-6 z-10 flex items-center gap-3 bg-black/90 px-4 py-2 rounded-full border border-white/10">
+                <Camera size={16} className="text-red-600 animate-pulse" />
+                <span className="text-[11px] font-bold text-white tracking-[0.2em] uppercase italic">
+                  Cam_Alpha // Live
+                </span>
+              </div>
+              <div className="w-full h-full bg-[url('https://images.unsplash.com/photo-1585320806297-9794b3e4eeae?auto=format&fit=crop&q=80&w=1200')] bg-cover opacity-25 hover:opacity-40 transition-opacity duration-1000" />
+            </div>
+
+            {/* Controller Plates */}
+            <div className="grid grid-cols-2 gap-6">
+              <StatusPlate
+                label="PUMP"
+                active={data.actuators.PUMP}
+                icon={Droplets}
+                activeColor="text-blue-400"
+              />
+              <StatusPlate
+                label="LIGHT"
+                active={data.actuators.LIGHT}
+                icon={Sun}
+                activeColor="text-yellow-400"
+              />
+              <StatusPlate
+                label="VENT"
+                active={data.actuators.VENT}
+                icon={Wind}
+                activeColor="text-green-400"
+              />
+              <StatusPlate
+                label="MIST"
+                active={data.actuators.MIST}
+                icon={CloudRain}
+                activeColor="text-sky-400"
+              />
+            </div>
+          </div>
+
+          {/* RIGHT: INTELLIGENCE & HISTORY (Maximum Width) */}
+          <div className="col-span-12 lg:col-span-6 flex flex-col gap-10">
+            {/* AI REASONING (Main Engine Output) */}
+            <div className="bg-[#08080a] border border-blue-900/30 p-10 rounded-xl h-[550px] flex flex-col shadow-2xl relative overflow-hidden">
+              <h4 className="text-[12px] font-bold text-blue-800 uppercase mb-6 flex gap-4 items-center">
+                <MessageSquare size={20} /> AI REASONING LOOP
+              </h4>
+              <div className="flex-1 overflow-y-auto pr-6 custom-scrollbar text-[15px] italic text-slate-200 leading-loose">
+                {logs.length > 0
+                  ? logs[logs.length - 1].text
+                  : "Awaiting Mission Briefing..."}
+              </div>
+            </div>
+
+            {/* MISSION HISTORY (Horizontal Stream) */}
+            <div className="bg-[#08080a] border border-slate-900 p-8 rounded-xl h-[280px] flex flex-col overflow-hidden shadow-inner">
+              <h4 className="text-[11px] font-bold text-slate-700 uppercase mb-6 flex gap-4 items-center">
+                <Terminal size={20} /> MISSION_LOG_STREAM
+              </h4>
+              <div className="flex-1 overflow-auto pr-4 custom-scrollbar space-y-5 text-[12px]">
+                {logs
+                  .slice()
+                  .reverse()
+                  .map((l: any, i: number) => (
+                    <div
+                      key={i}
+                      className="flex gap-8 border-l-4 border-slate-900 pl-6 py-2 opacity-50 hover:opacity-100 transition-opacity whitespace-nowrap"
+                    >
+                      <span className="text-blue-900 font-black tracking-widest shrink-0">
+                        [{l.time}]
+                      </span>
+                      <span className="text-slate-400">{l.text}</span>
+                    </div>
+                  ))}
+              </div>
+            </div>
+          </div>
         </div>
-        <div className="flex gap-6 items-center">
-          <div className="text-[10px]">
-            <span className="text-slate-600">UPTIME:</span> 01:14:22:09
-          </div>
-          <div className="text-green-500 text-[10px] font-bold flex items-center gap-2">
-            <Activity size={12} className="animate-pulse" /> LINK: ACTIVE
-          </div>
-        </div>
-      </header>
 
-      {/* MAIN MISSION GRID */}
-      <div className="grid grid-cols-12 gap-6">
-        {/* LEFT COLUMN: TELEMETRY */}
-        <div className="col-span-12 lg:col-span-3 space-y-4">
-          <StatCard
-            label="TEMP"
-            value={`${data.sensors.temp}°C`}
-            color="text-orange-500"
-          />
-          <StatCard
-            label="HUMIDITY"
-            value={`${data.sensors.hum}%`}
-            color="text-cyan-400"
-          />
-          <StatCard
-            label="SOIL"
-            value={`${data.sensors.shum}%`}
-            color="text-blue-500"
-          />
-          <StatCard
-            label="LUMENS"
-            value={`${data.sensors.lux}lx`}
-            color="text-yellow-500"
-          />
-        </div>
+        {/* 3. TELEMETRY TRENDS (Bottom Full-Width Station) */}
+        <div className="mt-16 border-t border-blue-900/20 pt-16 pb-32">
+          <h3 className="text-blue-900 text-[14px] font-black uppercase mb-12 tracking-[0.8em] flex items-center gap-6">
+            <Activity size={28} /> MULTI-CHANNEL TELEMETRY TRENDS
+          </h3>
 
-        {/* CENTER COLUMN: CAMERA & ACTUATORS */}
-        <div className="col-span-12 lg:col-span-5 space-y-6">
-          {/* CAMERA BOX */}
-          <div className="relative bg-slate-900 aspect-video rounded border border-slate-800 overflow-hidden group">
-            <div className="absolute top-2 left-2 z-10 flex items-center gap-2 bg-black/50 px-2 py-1 rounded">
-              <Camera size={12} className="text-red-500 animate-pulse" />
-              <span className="text-[9px] font-bold text-white uppercase tracking-widest">
-                CAM_01 // IR_ENABLED
-              </span>
-            </div>
-            {/* Simulated Scanning Line */}
-            <motion.div
-              animate={{ top: ["0%", "100%", "0%"] }}
-              transition={{ duration: 4, repeat: Infinity, ease: "linear" }}
-              className="absolute left-0 w-full h-[1px] bg-blue-500/30 z-10 shadow-[0_0_10px_#3b82f6]"
-            />
-            <div className="w-full h-full bg-[url('https://images.unsplash.com/photo-1585320806297-9794b3e4eeae?auto=format&fit=crop&q=80&w=800')] bg-cover opacity-40 grayscale group-hover:grayscale-0 transition-all duration-700" />
-            <div className="absolute inset-0 bg-blue-500/5 mix-blend-overlay" />
-          </div>
-
-          {/* ACTUATORS */}
-          <div className="grid grid-cols-4 gap-3">
-            <ControlBtn
-              label="PUMP"
-              active={data.actuators.PUMP}
-              on={() => sendCmd("31")}
-              off={() => sendCmd("30")}
-              icon={Droplets}
-            />
-            <ControlBtn
-              label="LITE"
-              active={data.actuators.LIGHT}
-              on={() => sendCmd("21")}
-              off={() => sendCmd("20")}
-              icon={Sun}
-            />
-            <ControlBtn
-              label="VENT"
-              active={data.actuators.VENT}
-              on={() => sendCmd("51")}
-              off={() => sendCmd("50")}
-              icon={Wind}
-            />
-            <ControlBtn
-              label="MIST"
-              active={data.actuators.MIST}
-              on={() => sendCmd("41")}
-              off={() => sendCmd("40")}
-              icon={CloudRain}
-            />
-          </div>
-        </div>
-
-        {/* RIGHT COLUMN: INTELLIGENCE */}
-        <div className="col-span-12 lg:col-span-4 space-y-6">
-          {/* LLM RESPONSE WINDOW */}
-          <div className="bg-blue-950/10 border border-blue-900/20 rounded p-4 h-[250px] flex flex-col">
-            <div className="flex items-center gap-2 text-blue-500 text-[10px] font-bold tracking-widest uppercase mb-3">
-              <MessageSquare size={14} /> AI Reasoning Engine
-            </div>
-            <div className="flex-1 text-[11px] text-slate-300 italic leading-relaxed overflow-y-auto custom-scrollbar">
-              {data.logs.length > 0
-                ? data.logs[data.logs.length - 1].text
-                : "Awaiting next diagnostic cycle..."}
-            </div>
-          </div>
-
-          {/* MISSION LOG */}
-          <div className="bg-black border border-slate-900 rounded p-4 h-[250px] flex flex-col">
-            <div className="flex items-center gap-2 text-slate-600 text-[10px] font-bold tracking-widest uppercase mb-3">
-              <Terminal size={14} /> Mission Log
-            </div>
-            <div className="flex-1 overflow-y-auto space-y-2 custom-scrollbar">
-              {data.logs
-                .slice(0, -1)
-                .reverse()
-                .map((log: any, i: number) => (
-                  <div
-                    key={i}
-                    className="text-[10px] flex gap-3 opacity-50 hover:opacity-100 transition-opacity"
-                  >
-                    <span className="text-blue-900 shrink-0">[{log.time}]</span>
-                    <span className="truncate">{log.text}</span>
-                  </div>
-                ))}
-            </div>
+          {/* Locked at 500px height for absolute visibility */}
+          <div
+            className="bg-[#08080a] border-2 border-slate-900/50 p-10 rounded-2xl shadow-3xl"
+            style={{ width: "100%", height: 500 }}
+          >
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart
+                data={chartData}
+                margin={{ top: 20, right: 60, left: 20, bottom: 20 }}
+              >
+                <CartesianGrid
+                  strokeDasharray="5 5"
+                  stroke="#111"
+                  vertical={false}
+                />
+                <XAxis
+                  dataKey="time"
+                  stroke="#334"
+                  fontSize={13}
+                  tickLine={false}
+                  axisLine={false}
+                  dy={20}
+                />
+                <YAxis
+                  stroke="#334"
+                  fontSize={13}
+                  tickLine={false}
+                  axisLine={false}
+                />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: "#000",
+                    border: "1px solid #1e3a8a",
+                    fontSize: "13px",
+                    borderRadius: "10px",
+                  }}
+                  itemStyle={{ fontSize: "13px", padding: "5px" }}
+                />
+                <Legend
+                  wrapperStyle={{ fontSize: "13px", paddingTop: "50px" }}
+                  iconType="circle"
+                />
+                <Line
+                  type="monotone"
+                  dataKey="temp"
+                  stroke="#f97316"
+                  strokeWidth={5}
+                  dot={false}
+                  name="Temp (°C)"
+                  isAnimationActive={false}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="shum"
+                  stroke="#3b82f6"
+                  strokeWidth={5}
+                  dot={false}
+                  name="Soil Moisture (%)"
+                  isAnimationActive={false}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="hum"
+                  stroke="#22d3ee"
+                  strokeWidth={5}
+                  dot={false}
+                  name="Air Humidity (%)"
+                  isAnimationActive={false}
+                />
+              </LineChart>
+            </ResponsiveContainer>
           </div>
         </div>
       </div>
@@ -190,102 +275,37 @@ export default function App() {
   );
 }
 
-// --- SUB-COMPONENTS ---
-function StatCard({ label, value, color }: any) {
+// --- MASTER SUB-COMPONENTS ---
+
+function StatBox({ label, value, color }: any) {
   return (
-    <div className="bg-black border border-slate-900 p-4 hover:border-blue-900/30 transition-all group">
-      <p className="text-[8px] font-bold text-slate-600 uppercase tracking-[0.2em] mb-1">
+    <div className="bg-[#08080a] border-2 border-slate-900 p-6 rounded-xl hover:border-blue-900/50 transition-all flex flex-col items-center justify-center text-center shadow-xl">
+      <p className="text-[11px] font-black text-slate-700 uppercase tracking-[0.3em] mb-3">
         {label}
       </p>
-      <div
-        className={`text-2xl font-bold tracking-tighter ${color} group-hover:pl-2 transition-all`}
-      >
+      <div className={`text-3xl font-black ${color} tracking-tighter`}>
         {value}
       </div>
     </div>
   );
 }
 
-function ControlBtn({ label, active, on, off, icon: Icon }: any) {
+function StatusPlate({ label, active, icon: Icon, activeColor }: any) {
   return (
-    <button
-      onClick={active ? off : on}
-      className={`p-3 rounded border flex flex-col items-center gap-2 transition-all ${active ? "bg-blue-600/10 border-blue-600 text-blue-500" : "bg-transparent border-slate-900 text-slate-800"}`}
+    <div
+      className={`p-8 rounded-xl border-2 flex flex-col items-center justify-center gap-5 transition-all duration-700 ${
+        active
+          ? `bg-blue-600/10 border-blue-600 ${activeColor} shadow-[0_0_40px_rgba(37,99,235,0.2)]`
+          : "bg-transparent border-slate-900 text-slate-800"
+      }`}
     >
-      <Icon size={16} className={active ? "animate-pulse" : "opacity-20"} />
-      <span className="text-[8px] font-black tracking-tighter uppercase">
+      <Icon size={32} className={active ? "animate-pulse" : "opacity-20"} />
+      <span className="text-[12px] font-black tracking-[0.4em] uppercase">
         {label}
       </span>
-    </button>
-  );
-}
-function MissionAnalytics({ chartData }: { chartData: any[] }) {
-  return (
-    <div className="mt-8 bg-[#08080a] border border-blue-900/10 rounded-sm p-6 h-[400px]">
-      <div className="flex items-center gap-2 text-blue-900 text-[10px] font-bold tracking-widest uppercase mb-6">
-        <Activity size={14} /> Environmental Trend Analysis
-      </div>
-      <ResponsiveContainer width="100%" height="90%">
-        <LineChart data={chartData}>
-          <CartesianGrid
-            strokeDasharray="3 3"
-            stroke="#1e293b"
-            vertical={false}
-          />
-          <XAxis
-            dataKey="time"
-            stroke="#475569"
-            fontSize={10}
-            tickLine={false}
-            axisLine={false}
-          />
-          <YAxis
-            stroke="#475569"
-            fontSize={10}
-            tickLine={false}
-            axisLine={false}
-          />
-          <Tooltip
-            contentStyle={{
-              backgroundColor: "#020203",
-              border: "1px solid #1e3a8a",
-              fontSize: "10px",
-            }}
-            itemStyle={{ fontSize: "10px" }}
-          />
-          <Legend wrapperStyle={{ fontSize: "10px", paddingTop: "20px" }} />
-          <Line
-            type="monotone"
-            dataKey="temp"
-            stroke="#f97316"
-            strokeWidth={2}
-            dot={false}
-            name="Temp (°C)"
-            animationDuration={300}
-          />
-          <Line
-            type="monotone"
-            dataKey="shum"
-            stroke="#3b82f6"
-            strokeWidth={2}
-            dot={false}
-            name="Soil (%)"
-            animationDuration={300}
-          />
-          <Line
-            type="monotone"
-            dataKey="hum"
-            stroke="#22d3ee"
-            strokeWidth={2}
-            dot={false}
-            name="Humidity (%)"
-            animationDuration={300}
-          />
-        </LineChart>
-      </ResponsiveContainer>
+      <div
+        className={`h-[4px] w-full rounded-full transition-all ${active ? "bg-current animate-pulse" : "bg-slate-900"}`}
+      />
     </div>
   );
 }
-
-// In your main App() return, add this at the bottom:
-// <MissionAnalytics chartData={data.chartData} />

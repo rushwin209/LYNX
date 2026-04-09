@@ -1,101 +1,183 @@
-import os, json, threading, time, pandas as pd
-from flask import Flask, jsonify, request
+import os, json, threading, time, re, pandas as pd, csv
+from flask import Flask, jsonify
 from flask_cors import CORS
 import paho.mqtt.client as mqtt
 from google import genai
 
+# --- FILE CONFIG ---
+DB_FILE = "mission_data.csv"
+VAULT_FILE = "memory_vault.json"       # Long-term (summaries)
+STM_FILE = "short_term_memory.json"    # Short-term (raw outputs for the 2hr block)
+API_KEY = os.environ.get("API_KEY")
+
 app = Flask(__name__)
 CORS(app)
+csv_lock = threading.Lock()
 
-DB_FILE = "mission_data.csv"
-# Ensure CSV has headers if it's new
+# Initialize Files properly
+for f_path in [VAULT_FILE, STM_FILE]:
+    if not os.path.exists(f_path):
+        with open(f_path, 'w') as f: json.dump({"entries": []}, f)
 if not os.path.exists(DB_FILE):
-    pd.DataFrame(columns=["timestamp", "topic", "value"]).to_csv(DB_FILE, index=False)
+    with open(DB_FILE, "w", newline="") as f:
+        csv.writer(f).writerow(["timestamp", "topic", "value"])
 
-# Shared State for UI
 system_state = {
     "sensors": {"temp": 0, "hum": 0, "shum": 0, "lux": 0},
     "actuators": {"PUMP": False, "LIGHT": False, "VENT": False, "MIST": False},
-    "logs": []
+    "logs": [] 
 }
 
-def on_mqtt_msg(client, userdata, msg):
-    global system_state
-    val = msg.payload.decode()
-    topic = msg.topic
-    
-    # 1. Log to CSV for AI History
-    new_entry = pd.DataFrame([[time.time(), topic, val]], columns=["timestamp", "topic", "value"])
-    new_entry.to_csv(DB_FILE, mode='a', header=False, index=False)
+# --- MEMORY UTILITIES ---
+def get_memory(file_path, limit=4):
+    try:
+        with open(file_path, 'r') as f:
+            return json.load(f)["entries"][-limit:]
+    except: return []
 
-    # 2. Update Live UI State
-    if topic == "tempg": system_state["sensors"]["temp"] = float(val)
-    elif topic == "humg": system_state["sensors"]["hum"] = float(val)
-    elif topic == "shumg": system_state["sensors"]["shum"] = float(val)
-    elif topic == "luxg": system_state["sensors"]["lux"] = int(val)
+def add_memory(file_path, text):
+    with open(file_path, 'r+') as f:
+        data = json.load(f)
+        data["entries"].append({"time": time.strftime("%Y-%m-%d %H:%M"), "text": text})
+        f.seek(0); json.dump(data, f); f.truncate()
+
+def clear_memory(file_path):
+    with open(file_path, 'w') as f: json.dump({"entries": []}, f)
+
+# --- ANALYTICS ENGINE ---
+def compute_window_stats():
+    with csv_lock:
+        try:
+            df = pd.read_csv(DB_FILE)
+            df['value'] = pd.to_numeric(df['value'], errors='coerce')
+            df = df.dropna().tail(200)
+            stats = {}
+            mapping = {"tempg": "temp", "humg": "hum", "shumg": "shum", "luxg": "lux"}
+            for topic, key in mapping.items():
+                subset = df[df['topic'] == topic]['value']
+                if not subset.empty:
+                    stats[key] = {"avg": round(subset.mean(), 1), "min": subset.min(), "max": subset.max()}
+            return stats
+        except: return {}
+
+# --- ACTION PARSER ---
+def execute_system_commands(llm_output):
+    actions = re.findall(r'\[(pump|light|vent|mist):(on|off)\]', llm_output.lower())
+    mapping = {"pump":"3", "light":"2", "mist":"4", "vent":"5"}
+    state_map = {"on":"1", "off":"0"}
+    for device, state in actions:
+        if device in mapping:
+            cmd = mapping[device] + state_map[state]
+            mqtt_c.publish("commandgh", cmd)
+
+# --- THE COGNITIVE LOOP ---
+def ai_brain():
+    if not API_KEY: return
+    client = genai.Client(api_key=API_KEY)
+    
+    print("🛰️ STATION_01: AI Brain initializing. Calibrating sensors (300s)...")
+    time.sleep(300) 
+
+    while True:
+        stats = compute_window_stats()  
+        ltm = get_memory(VAULT_FILE)    # The 2-hour consolidated summaries
+        stm = get_memory(STM_FILE, 1)   # Last diagnostic output
+        mission_history = system_state["logs"][-3:] # Last 3 mission logs
+
+        prompt = f"""
+        MISSION: SOL BIODOME STATION_01.
+        ROLE: Autonomous AI guardian. This is a life-changing experience. 
+        You are responsible for Sol, a tomato plant. 
+        Tone: Clinical precision + deep, protective pride.
+
+        LONG-TERM EPISODIC MEMORY (Summaries of past 2-hour blocks):
+        {json.dumps(ltm)}
+
+        PREVIOUS DIAGNOSTIC OUTPUT:
+        {json.dumps(stm)}
+
+        MISSION HISTORY (Last 3 specific actions):
+        {json.dumps(mission_history)}
+
+        CURRENT TELEMETRY (15-Min Statistical Window):
+        {json.dumps(stats)}
+
+        HARDWARE STATUS:
+        {json.dumps(system_state["actuators"])}
+
+        INSTRUCTIONS:
+        1. Open with [Thought]. Reason through the deltas ($ \Delta $) in sensors.
+        2. Respond to the human. Acknowledge the weight of this responsibility.
+        3. COMPULSORY: State status for ALL controllers: [pump:on/off] [light:on/off] [vent:on/off] [mist:on/off].
+        4. COMPULSORY: End with 'MISSION_LOG:' + 1-sentence data/action summary.
+        5. Use [SLEEP] when you feel a 2-hour cycle has ended.
+        """
+
+        try:
+            res = client.models.generate_content(model="gemini-1.5-flash", contents=prompt)
+            full_text = res.text
+            execute_system_commands(full_text)
+            
+            # Log for UI
+            log_match = re.search(r'MISSION_LOG:(.*)', full_text, re.IGNORECASE)
+            ui_log = log_match.group(1).strip() if log_match else "Diagnostic heartbeat active."
+            system_state["logs"].append({"time": time.strftime("%H:%M"), "text": ui_log})
+            
+            # Save to Short-Term Memory file
+            add_memory(STM_FILE, full_text)
+
+            # CONSOLIDATION (The "Sleep" Event)
+            if "[SLEEP]" in full_text or len(get_memory(STM_FILE, 100)) >= 8:
+                print("🌙 ENTERING SLEEP MODE: Consolidating...")
+                raw_context = get_memory(STM_FILE, 100)
+                sum_prompt = f"Distill these 2 hours of logic into one clinical episodic summary: {raw_context}"
+                summary = client.models.generate_content(model="gemini-1.5-flash", contents=sum_prompt)
+                
+                # FIX: Using add_memory for the vault instead of save_to_vault
+                add_memory(VAULT_FILE, summary.text) 
+                clear_memory(STM_FILE) 
+                system_state["logs"].append({"time": time.strftime("%H:%M"), "text": "SYSTEM: Memory consolidated."})
+
+        except Exception as e:
+            print(f"AI Loop Error: {e}")
+
+        time.sleep(900)
+
+# --- MQTT & FLASK BOILERPLATE (Same as before) ---
+def on_mqtt_msg(client, userdata, msg):
+    topic, val = msg.topic, msg.payload.decode()
+    with csv_lock:
+        with open(DB_FILE, "a", newline="") as f:
+            csv.writer(f).writerow([time.time(), topic, val])
+    mapping = {"tempg":"temp", "humg":"hum", "shumg":"shum", "luxg":"lux"}
+    if topic in mapping: system_state["sensors"][mapping[topic]] = float(val)
     elif topic == "statusg":
-        mapping = {"21":("LIGHT",True), "20":("LIGHT",False), "31":("PUMP",True), "30":("PUMP",False), 
-                   "51":("VENT",True), "50":("VENT",False), "41":("MIST",True), "40":("MIST",False)}
-        if val in mapping:
-            dev, status = mapping[val]
-            system_state["actuators"][dev] = status
+        status_map = {"31":("PUMP",True), "30":("PUMP",False), "21":("LIGHT",True), "20":("LIGHT",False)}
+        if val in status_map:
+            key, state = status_map[val]; system_state["actuators"][key] = state
+
+@app.route('/api/status')
+def get_status():
+    chart_data = []
+    with csv_lock:
+        if os.path.exists(DB_FILE):
+            try:
+                df = pd.read_csv(DB_FILE)
+                df['timestamp'] = pd.to_numeric(df['timestamp'], errors='coerce')
+                df['value'] = pd.to_numeric(df['value'], errors='coerce')
+                df = df.dropna().tail(100)
+                df['time_label'] = df['timestamp'].apply(lambda x: time.strftime("%H:%M", time.localtime(x)))
+                pivoted = df.pivot_table(index='time_label', columns='topic', values='value', aggfunc='mean')
+                for t, r in pivoted.iterrows():
+                    chart_data.append({"time": t, "temp": r.get('tempg', 0), "shum": r.get('shumg', 0), "hum": r.get('humg', 0)})
+            except: pass
+    return jsonify({**system_state, "chartData": chart_data[-25:]})
 
 mqtt_c = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
 mqtt_c.on_message = on_mqtt_msg
 mqtt_c.connect("127.0.0.1", 1883)
 mqtt_c.subscribe([("tempg",0), ("humg",0), ("shumg",0), ("luxg",0), ("statusg",0)])
-threading.Thread(target=mqtt_c.loop_forever, daemon=True).start()
-
-# AI Loop: Reads CSV to make decisions
-def ai_brain():
-    client = genai.Client(api_key=os.environ.get("API_KEY"))
-    while True:
-        time.sleep(300) # Analyze every 5 mins
-        try:
-            df = pd.read_csv(DB_FILE).tail(20) # Get last 20 readings
-            history_summary = df.to_string()
-            prompt = f"Horticultural Analysis Request. History:\n{history_summary}\nDecide next action."
-            res = client.models.generate_content(model="gemini-3-flash-preview", contents=prompt)
-            system_state["logs"].append({"time": time.strftime("%H:%M"), "text": res.text[:150]})
-        except Exception as e: print(f"AI Error: {e}")
+mqtt_c.loop_start()
 
 threading.Thread(target=ai_brain, daemon=True).start()
-
-@app.route('/api/status')
-def get_status():
-    try:
-        # Read the last 50 entries to build the graph
-        df = pd.read_csv(DB_FILE)
-        
-        # We need to pivot the data so each timestamp has all variables in one row
-        # for the Recharts format: [{time: 12:00, temp: 22, shum: 60}, ...]
-        recent_df = df.tail(100) # Get a good window of data
-        
-        # Simple formatting for Recharts
-        # We group by timestamp and create a list of dicts
-        chart_data = []
-        for ts, group in recent_df.groupby('timestamp'):
-            row = {"time": time.strftime("%H:%M", time.localtime(ts))}
-            for _, item in group.iterrows():
-                # Map MQTT topics to chart keys
-                key_map = {"tempg": "temp", "humg": "hum", "shumg": "shum", "luxg": "lux"}
-                if item['topic'] in key_map:
-                    row[key_map[item['topic']]] = float(item['value'])
-            chart_data.append(row)
-
-        return jsonify({
-            "sensors": system_state["sensors"],
-            "actuators": system_state["actuators"],
-            "logs": system_state["logs"],
-            "chartData": chart_data[-30:] # Send last 30 time-points to the graph
-        })
-    except Exception as e:
-        return jsonify({"error": str(e), "sensors": system_state["sensors"], "logs": []})
-
-@app.route('/api/cmd', methods=['POST'])
-def cmd():
-    mqtt_c.publish("commandgh", str(request.json['code']))
-    return jsonify({"status":"ok"})
-
-if __name__ == "__main__":
-    app.run(port=5000)
+if __name__ == "__main__": app.run(port=5000)
